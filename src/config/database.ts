@@ -11,7 +11,9 @@ export const AppDataSource = new DataSource({
     username: process.env.DB_USER || "postgres",
     password: process.env.DB_PASSWORD || "1234",
     database: process.env.DB_NAME || "safety_db",
-    synchronize: true,
+    synchronize: false,
     logging: false,
-    entities: [SafetyEventEntity]
+    entities: [SafetyEventEntity],
+    migrations: ["src/migrations/*.ts"],
+    migrationsTableName: "migrations",
 })
