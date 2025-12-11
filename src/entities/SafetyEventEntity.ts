@@ -50,4 +50,7 @@ export class SafetyEventEntity {
 
     @Column("text", { nullable: true })
     coordinates!: string;
+
+    @Column("text", {nullable: true})
+    imagePath!: string
 }
