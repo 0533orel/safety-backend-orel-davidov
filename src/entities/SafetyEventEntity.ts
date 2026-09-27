@@ -6,7 +6,7 @@ export class SafetyEventEntity {
     @PrimaryGeneratedColumn()
     id!: number;
 
-    @Column("bigint")
+    @Column('bigint', { transformer: { to: (value: number) => value, from: (value: string) => Number(value) } })
     createdAt!: number;
 
     @Column("text")
@@ -52,5 +52,5 @@ export class SafetyEventEntity {
     coordinates!: string;
 
     @Column("text", {nullable: true})
-    imagePath!: string
+    imagePath!: string | null
 }

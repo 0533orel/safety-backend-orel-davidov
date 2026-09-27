@@ -1,0 +1,13 @@
+services:
+  db:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: safety_demo
+      POSTGRES_PASSWORD: local_demo_only
+      POSTGRES_DB: safety_demo
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - safety_demo_data:/var/lib/postgresql/data
+volumes:
+  safety_demo_data:
