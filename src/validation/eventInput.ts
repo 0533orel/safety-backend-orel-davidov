@@ -11,7 +11,7 @@ export function parseEventInput(input: unknown): Partial<SafetyEventEntity> {
         const value = body[field];
         if (required.includes(field as typeof required[number]) && (typeof value !== 'string' || !value.trim()))
             throw new HttpError(400, 'Missing field: ' + field);
-        if (value === undefined || value === null) continue;
+        if (value === undefined || value === null) { result[field] = ''; continue; }
         if (typeof value !== 'string' || value.length > 800) throw new HttpError(400, 'Invalid field: ' + field);
         result[field] = value.trim();
     }

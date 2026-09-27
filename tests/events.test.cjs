@@ -46,7 +46,7 @@ test('JSON CRUD ignores client IDs and timestamps; bigint returns as a number', 
   await request(app).delete('/api/events/' + created.body.id).expect(404);
 });
 test('invalid identifiers, missing fields, impossible dates and malformed flags return 400', async () => {
-  for (const id of ['12abc', '0', '-1', '9007199254740992']) await request(app).delete('/api/events/' + id).expect(400);
+  for (const id of ['12abc', '0', '-1', '2147483648', '9007199254740992']) await request(app).delete('/api/events/' + id).expect(400);
   for (const body of [{}, { ...event, eventDate: '2025-02-30' }, { ...event, eventTime: '25:00' }, { ...event, eventDate: '2999-01-01' }]) {
     await request(app).post('/api/events').send(body).expect(400);
   }
@@ -83,4 +83,10 @@ test('failed validation and missing records do not leave uploaded files', async 
 test('non-image content, SVG and oversized files are rejected', async () => {
   await request(app).post('/api/events').attach('image', Buffer.from('<svg/>'), { filename: 'fake.png', contentType: 'image/png' }).expect(400);
   await request(app).post('/api/events').attach('image', Buffer.alloc(6 * 1024 * 1024), 'large.png').expect(400);
+});
+
+test('PUT clears omitted optional text fields', async () => {
+  const created = await request(app).post('/api/events').send({ ...event, recommendations: 'Old recommendation', coordinates: '123456/123456', injurySeverity: 'None' }).expect(201);
+  const updated = await request(app).put('/api/events/' + created.body.id).send(event).expect(200);
+  for (const field of ['recommendations', 'coordinates', 'injurySeverity']) assert.equal(updated.body[field], '');
 });
