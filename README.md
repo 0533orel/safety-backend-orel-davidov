@@ -1,176 +1,57 @@
-# Safety Backend – Orel Davidov
+# Safety API
+Backend for a Hebrew incident-reporting application. Pair with [Safety frontend](https://github.com/0533orel/safety-orel-davidov).
 
-Backend service for a safety-related application, built with Node.js and TypeScript.  
-The project is structured with a clear separation between configuration, entities, controllers, services, middleware, and routing.
+## Implemented
+- Create, list, replace and delete incidents in PostgreSQL through TypeORM.
+- Optional PNG/JPEG/WebP uploads up to 5 MiB, checked by file signature.
+- Input validation, server-owned IDs/timestamps and consistent HTTP errors.
+- JSON and multipart image removal; old images are cleaned up after database commits.
+- Row locks serialize updates/deletes to the same incident.
 
-## Tech Stack
-
-- **Language:** TypeScript
-- **Runtime:** Node.js
-- **Framework:** Express (HTTP server, routing, middleware)
-- **ORM / Data Layer:** TypeORM or similar (entities, migrations)
-- **Build / Config:** `tsconfig.json`, npm scripts (`package.json`)
-
-> Note: The exact libraries are defined in `package.json` (dependencies and scripts).
-
-## Project Structure
-
-- `src/app.ts`  
-  Application entry point. Initializes the Express app, applies global middleware, connects configuration (database, environment), and mounts routes.
-
-- `src/config/`  
-  Environment and application configuration:
-  - Database connection settings
-  - Environment variables handling
-  - Possibly logging and other global config
-
-- `src/entities/`  
-  Domain models mapped to database tables (e.g. users, incidents, reports, safety checks).  
-  Each entity typically includes:
-  - Columns and types
-  - Relations between entities
-  - Validation rules at the model level
-
-- `src/migrations/`  
-  Database migration files for evolving the schema:
-  - Creating and altering tables
-  - Adding or removing columns and indexes
-  - Data corrections when needed
-
-- `src/controllers/`  
-  Request handlers for each resource:
-  - Parse and validate incoming requests
-  - Delegate business logic to services
-  - Map service results to HTTP responses (status codes, JSON payloads)
-  - Handle basic error mapping (e.g. 400, 401, 404, 500)
-
-- `src/services/`  
-  Business logic and interaction with the data layer:
-  - Implement safety-related use cases (e.g. create incident, update status, fetch reports)
-  - Orchestrate entities, repositories, and external integrations
-  - Enforce domain rules and invariants
-
-- `src/middleware/`  
-  Cross-cutting HTTP concerns:
-  - Authentication and authorization
-  - Request logging
-  - Error handling
-  - Input validation (if not done at controller level)
-
-- `src/routes/`  
-  Route definitions that wire HTTP paths to controllers and middleware, for example:
-  - `POST /api/incidents`
-  - `GET /api/incidents/:id`
-  - `PUT /api/incidents/:id`
-  - Auth-related routes (if implemented)
-
-## Getting Started
-
-### Prerequisites
-
-- Node.js (LTS version recommended)
-- npm
-- A compatible database (configured in `src/config` and environment variables)
-
-### Installation
-
-```bash
-git clone https://github.com/0533orel/safety-backend-orel-davidov.git
-cd safety-backend-orel-davidov
-npm install
-```
-
-### Configuration
-
-1. Create an environment file (for example `.env`) or configure environment variables as expected by the project:
-   - Database connection parameters
-   - Port and host
-   - Any authentication / JWT secrets or external API keys
-
-2. Verify or adjust config files in `src/config/` to match your environment.
-
-### Database Migrations
-
-Run database migrations before starting the server in a non-empty environment (exact command may vary depending on ORM setup):
-
-```bash
+## Local setup
+Requires Node.js 22 and PostgreSQL. Use a dedicated development database with synthetic data.
+```sh
+npm ci
+cp .env.example .env
 npm run migration:run
-# or
-npm run typeorm migration:run
-```
-
-Check `package.json` for the precise script name.
-
-### Running the Application
-
-#### Development
-
-```bash
 npm run dev
 ```
+On PowerShell use `Copy-Item .env.example .env`. Set database credentials in `.env` first.
+Optional local database: `docker compose up -d` (Docker must be running).
 
-This typically runs the TypeScript source directly with a watcher (e.g. `ts-node-dev` or `nodemon`).
-
-#### Production
-
-Build and run the compiled JavaScript:
-
-```bash
+## Checks
+```sh
+npm test
 npm run build
 npm start
 ```
+Tests exercise HTTP routes and file lifecycle using pg-mem, an isolated PostgreSQL emulator.
+They do not validate real PostgreSQL locking, rollback or deployment behavior.
+The default listener is 127.0.0.1:3000. Production start runs compiled JavaScript.
+Set CORS_ORIGINS to a comma-separated list of frontend origins. It is not authentication.
 
-The server will start on the port defined in your configuration or environment variables.
+## API
+| Method | Path | Result |
+|---|---|---|
+| GET | /health | Process liveness |
+| GET | /api/events | Events, newest first |
+| POST | /api/events | Create; 201 |
+| PUT | /api/events/:id | Full writable-field replacement; 200 |
+| DELETE | /api/events/:id | Delete; 204 or 404 |
 
-## API Overview
+Required strings: unitName, description, eventDate (YYYY-MM-DD), eventTime (HH:mm),
+location, result, unitActivity, personalActivity, category, weather, eventSeverity.
+Optional strings: injurySeverity, recommendations, coordinates.
+All strings are limited to 800 characters. Dates must be valid and not future-dated
+in the server timezone. Configure the server timezone to match intended users.
+IDs, createdAt and imagePath from request bodies are ignored.
+To attach a file use multipart field `image`; to remove one use `deleteImage: true`
+in JSON or `deleteImage=true` in multipart. A new upload takes precedence.
 
-The backend exposes RESTful endpoints under a common base path (for example `/api`).  
-Typical groups of endpoints (depending on the implemented controllers):
-
-- **Authentication & Users**
-  - Register, login, and manage user profiles
-  - Protect routes with auth middleware
-
-- **Safety Incidents / Reports**
-  - Create and update incidents or safety reports
-  - List, filter, and retrieve details
-  - Change statuses and assign responsibility
-
-- **Auxiliary Resources**
-  - Reference data used in the safety domain (e.g. locations, categories)
-
-Refer to route definitions under `src/routes/` and controllers in `src/controllers/` for the exact API surface.
-
-## Error Handling
-
-- Centralized error handling via middleware in `src/middleware/`
-- Maps domain and validation errors to appropriate HTTP status codes
-- Returns structured error responses (JSON) to clients
-
-## Scripts
-
-Common scripts defined in `package.json` may include:
-
-- `npm run dev` – Start development server
-- `npm run build` – Compile TypeScript to JavaScript
-- `npm start` – Start compiled server
-- `npm test` – Run tests (if defined)
-- Migration-related scripts (e.g. `migration:run`, `migration:revert`)
-
-Check `package.json` for the complete list and exact names.
-
-## Development Guidelines
-
-- Keep business logic inside `services` and leave controllers thin.
-- Use `entities` and `migrations` together to manage database schema changes safely.
-- Add new features by:
-  1. Designing or updating entities.
-  2. Creating migrations.
-  3. Implementing service methods.
-  4. Exposing endpoints via controllers and route files.
-  5. Securing them with middleware when necessary.
-
-## License
-
-Specify the license here if applicable (for example MIT, Apache 2.0).  
-If no license file is present, the repository is by default “all rights reserved”.
+## Scope and remaining work
+This is a **local portfolio demo**, not an authenticated production application.
+Do not expose it publicly with real incident data. User authentication, role authorization,
+rate limiting, pagination, domain-specific enum validation, malware scanning, backups and
+real-PostgreSQL integration tests remain to be implemented. File signatures are not full image decoding.
+Cleanup failures are logged; a reconciliation job is still needed.
+The repository does not establish ownership or permission for any real data.

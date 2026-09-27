@@ -86,3 +86,5 @@ storybook-static/
 # Docker data
 docker-data/
 
+
+uploads/
