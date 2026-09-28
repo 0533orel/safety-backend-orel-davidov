@@ -9,8 +9,8 @@ const { newDb, DataType } = require('pg-mem');
 let app, db, uploads;
 const event = {
   unitName: 'Demo', description: 'Synthetic test incident', eventDate: '2025-01-01',
-  eventTime: '10:30', location: 'Office', result: 'No injury', unitActivity: 'Work',
-  personalActivity: 'Work', category: 'Equipment', weather: 'Clear', eventSeverity: 'Low'
+  eventTime: '10:30', location: 'בסיס', result: 'א.נ.א.נ (אין נפגעים, אין נזק)', unitActivity: 'אימונים',
+  personalActivity: 'אימון', category: 'עבודה', weather: 'נאה', eventSeverity: 'קל'
 };
 const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
 function withImage(method, url, fields = event) {
@@ -21,6 +21,12 @@ function withImage(method, url, fields = event) {
 before(async () => {
   uploads = await fs.mkdtemp(path.join(os.tmpdir(), 'safety-test-'));
   process.env.UPLOAD_DIR = uploads;
+  if (process.env.SAFETY_REAL_POSTGRES === 'true') {
+    db = require('../dist/config/database').AppDataSource;
+    await db.initialize();
+    app = require('../dist/server').createApp();
+    return;
+  }
   const memory = newDb();
   memory.public.registerFunction({ name: 'current_database', returns: DataType.text, implementation: () => 'test' });
   memory.public.registerFunction({ name: 'version', returns: DataType.text, implementation: () => 'PostgreSQL 16' });
@@ -40,14 +46,14 @@ test('JSON CRUD ignores client IDs and timestamps; bigint returns as a number', 
   assert.ok(created.body.createdAt > 0);
   assert.equal(created.body.imagePath, null);
   const rows = await request(app).get('/api/events').expect(200);
-  assert.equal(typeof rows.body[0].createdAt, 'number');
+  assert.equal(typeof rows.body.items[0].createdAt, 'number');
   await request(app).put('/api/events/' + created.body.id).send({ ...event, description: 'Updated' }).expect(200);
   await request(app).delete('/api/events/' + created.body.id).expect(204);
   await request(app).delete('/api/events/' + created.body.id).expect(404);
 });
 test('invalid identifiers, missing fields, impossible dates and malformed flags return 400', async () => {
   for (const id of ['12abc', '0', '-1', '2147483648', '9007199254740992']) await request(app).delete('/api/events/' + id).expect(400);
-  for (const body of [{}, { ...event, eventDate: '2025-02-30' }, { ...event, eventTime: '25:00' }, { ...event, eventDate: '2999-01-01' }]) {
+  for (const body of [{}, { ...event, eventDate: '0000-01-01' }, { ...event, eventDate: '2025-02-30' }, { ...event, eventTime: '25:00' }, { ...event, eventDate: '2999-01-01' }]) {
     await request(app).post('/api/events').send(body).expect(400);
   }
   await request(app).put('/api/events/1').send({ ...event, deleteImage: 'yes' }).expect(400);
@@ -86,7 +92,122 @@ test('non-image content, SVG and oversized files are rejected', async () => {
 });
 
 test('PUT clears omitted optional text fields', async () => {
-  const created = await request(app).post('/api/events').send({ ...event, recommendations: 'Old recommendation', coordinates: '123456/123456', injurySeverity: 'None' }).expect(201);
+  const created = await request(app).post('/api/events').send({ ...event, recommendations: 'Old recommendation', coordinates: '123456/123456', injurySeverity: 'ללא פגיעה' }).expect(201);
   const updated = await request(app).put('/api/events/' + created.body.id).send(event).expect(200);
   for (const field of ['recommendations', 'coordinates', 'injurySeverity']) assert.equal(updated.body[field], '');
 });
+
+test('domain options, conditional fields and bounded pagination reject invalid input', async () => {
+  const contract = require('../dist/contract/event-contract.json');
+  for (const field of Object.keys(contract.enums))
+    await request(app).post('/api/events').send({ ...event, [field]: 'unknown-option' }).expect(400);
+  await request(app).post('/api/events').send({ ...event, location: 'שטח אזרחי' }).expect(400);
+  await request(app).post('/api/events').send({ ...event, result: contract.enums.result[2] }).expect(400);
+  for (const query of ['limit=0', 'limit=101', 'limit=1.5', 'limit=1&limit=2', 'cursor=no', 'cursor=1:0', 'cursor=9007199254740992:1'])
+    await request(app).get('/api/events?' + query).expect(400);
+});
+
+test('event clock and future rejection are independent of host timezone', async () => {
+  const { eventClock } = require('../dist/contract/eventClock');
+  assert.equal(eventClock(new Date('2025-01-01T22:30:00Z')), '2025-01-02T00:30');
+  assert.equal(eventClock(new Date('2025-07-01T22:30:00Z')), '2025-07-02T01:30');
+  const previous = process.env.TZ;
+  try {
+    for (const zone of ['UTC', 'America/Los_Angeles', 'Asia/Tokyo']) {
+      process.env.TZ = zone;
+      assert.equal(eventClock(new Date('2025-01-01T22:30:00Z')), '2025-01-02T00:30');
+      await request(app).post('/api/events').send({ ...event, eventDate: '2999-01-01' }).expect(400);
+    }
+  } finally { if (previous === undefined) delete process.env.TZ; else process.env.TZ = previous; }
+});
+
+if (process.env.SAFETY_REAL_POSTGRES === 'true') {
+  test('every contract option is accepted by HTTP and database constraints', async () => {
+    const contract = require('../dist/contract/event-contract.json');
+    for (const [field, values] of Object.entries(contract.enums)) {
+      for (const value of values) {
+        const created = await request(app).post('/api/events').send({
+          ...event, coordinates: '123456/123456', injurySeverity: 'ללא פגיעה', [field]: value
+        }).expect(201);
+        assert.equal(created.body[field], value);
+        await request(app).delete('/api/events/' + created.body.id).expect(204);
+      }
+    }
+  });
+
+  test('keyset pages traverse equal timestamps exactly once, despite insertion/deletion', async () => {
+    const ids = [];
+    for (let i = 0; i < 5; i++) {
+      const response = await request(app).post('/api/events').send(event).expect(201);
+      ids.push(response.body.id);
+    }
+    await db.query('UPDATE safety_events SET "createdAt" = 1800000000000 WHERE id = ANY($1)', [ids]);
+    const first = (await request(app).get('/api/events?limit=2').expect(200)).body;
+    assert.deepEqual(first.items.map(row => row.id), ids.slice(-2).reverse());
+    await request(app).delete('/api/events/' + first.items[0].id).expect(204);
+    const inserted = await request(app).post('/api/events').send(event).expect(201);
+    await db.query('UPDATE safety_events SET "createdAt" = 1800000000001 WHERE id=$1', [inserted.body.id]);
+    const seen = first.items.map(row => row.id);
+    let cursor = first.nextCursor;
+    while (cursor) {
+      const page = (await request(app).get('/api/events').query({ limit: 2, cursor }).expect(200)).body;
+      seen.push(...page.items.map(row => row.id)); cursor = page.nextCursor;
+    }
+    assert.equal(new Set(seen).size, seen.length);
+    assert.ok(ids.every(id => seen.includes(id)));
+    assert.ok(!seen.includes(inserted.body.id));
+  });
+
+  test('PostgreSQL commit failure rolls back update/delete and preserves original image', async () => {
+    const created = (await withImage('post', '/api/events').expect(201)).body;
+    const files = (await fs.readdir(uploads)).sort();
+    await db.query(`CREATE FUNCTION safe01_fail_commit() RETURNS trigger LANGUAGE plpgsql AS $$
+      BEGIN RAISE EXCEPTION 'synthetic deferred commit failure'; END $$`);
+    await db.query(`CREATE CONSTRAINT TRIGGER safe01_fail_commit AFTER UPDATE OR DELETE ON safety_events
+      DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION safe01_fail_commit()`);
+    try {
+      await withImage('put', '/api/events/' + created.id, { ...event, description: 'Must roll back' }).expect(500);
+      await request(app).delete('/api/events/' + created.id).expect(500);
+      const stored = await db.getRepository(require('../dist/entities/SafetyEventEntity').SafetyEventEntity).findOneBy({ id: created.id });
+      assert.equal(stored.description, event.description);
+      assert.equal(stored.imagePath, created.imagePath);
+      assert.deepEqual((await fs.readdir(uploads)).sort(), files);
+      await fs.access(path.join(uploads, created.imagePath));
+    } finally {
+      await db.query('DROP TRIGGER safe01_fail_commit ON safety_events');
+      await db.query('DROP FUNCTION safe01_fail_commit()');
+    }
+  });
+
+  test('real row locks block HTTP update and delete until the holding transaction commits', async () => {
+    for (const method of ['put', 'delete']) {
+      const created = (await request(app).post('/api/events').send(event).expect(201)).body;
+      const runner = db.createQueryRunner();
+      await runner.connect(); await runner.startTransaction();
+      let pending;
+      try {
+        const [{ pid }] = await runner.query('SELECT pg_backend_pid() AS pid');
+        await runner.query('SELECT id FROM safety_events WHERE id=$1 FOR UPDATE', [created.id]);
+        let req = request(app)[method]('/api/events/' + created.id);
+        if (method === 'put') req = req.send({ ...event, description: 'After lock' });
+        pending = req.then(response => response);
+        const deadline = Date.now() + 5000;
+        let blocked = false;
+        while (Date.now() < deadline) {
+          const rows = await db.query('SELECT pid FROM pg_stat_activity WHERE $1::int = ANY(pg_blocking_pids(pid))', [pid]);
+          if (rows.length) { blocked = true; break; }
+          await new Promise(resolve => setTimeout(resolve, 25));
+        }
+        assert.ok(blocked, 'HTTP transaction must actually wait on PostgreSQL row lock');
+        await runner.commitTransaction();
+        const response = await pending;
+        assert.equal(response.status, method === 'put' ? 200 : 204);
+        if (method === 'put') assert.equal(response.body.description, 'After lock');
+      } finally {
+        if (runner.isTransactionActive) await runner.rollbackTransaction();
+        if (pending) await pending;
+        await runner.release();
+      }
+    }
+  });
+}

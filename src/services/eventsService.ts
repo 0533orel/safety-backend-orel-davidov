@@ -7,8 +7,14 @@ export class EventsService {
         const repository = AppDataSource.getRepository(SafetyEventEntity);
         return repository.save(repository.create({ ...data, createdAt: Date.now() }));
     }
-    static async getAllEvents() {
-        return AppDataSource.getRepository(SafetyEventEntity).find({ order: { createdAt: 'DESC' } });
+    static async getAllEvents(limit: number, cursor?: { createdAt: number; id: number }) {
+        const query = AppDataSource.getRepository(SafetyEventEntity).createQueryBuilder('event')
+            .orderBy('event.createdAt', 'DESC').addOrderBy('event.id', 'DESC').take(limit + 1);
+        if (cursor) query.where('(event.createdAt < :createdAt OR (event.createdAt = :createdAt AND event.id < :id))', cursor);
+        const rows = await query.getMany();
+        const items = rows.slice(0, limit);
+        const last = items[items.length - 1];
+        return { items, nextCursor: rows.length > limit ? `${last.createdAt}:${last.id}` : null };
     }
     static async deleteEvent(id: number) {
         const image = await AppDataSource.transaction(async manager => {

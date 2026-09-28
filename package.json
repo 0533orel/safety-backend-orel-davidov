@@ -11,7 +11,13 @@
     "migration:generate": "npx typeorm-ts-node-commonjs migration:generate -d src/config/database.ts",
     "migration:run": "npx typeorm-ts-node-commonjs migration:run -d src/config/database.ts",
     "migration:revert": "npx typeorm-ts-node-commonjs migration:revert -d src/config/database.ts",
-    "test": "npm run build && node --test tests/*.test.cjs"
+    "test": "npm run build && node --test tests/*.test.cjs",
+    "migration:run:dist": "typeorm migration:run -d dist/config/database.js",
+    "migration:revert:dist": "typeorm migration:revert -d dist/config/database.js",
+    "seed": "ts-node src/seed.ts",
+    "seed:dist": "node dist/seed.js",
+    "test:postgres": "npm run build && node --test tests/postgres/*.test.cjs",
+    "lint": "tsc --noEmit"
   },
   "devDependencies": {
     "@types/cors": "^2.8.19",
