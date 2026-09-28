@@ -2,6 +2,8 @@ import { DataSource} from "typeorm";
 import {SafetyEventEntity} from "../entities/SafetyEventEntity";
 import dotenv from 'dotenv'
 import path from 'node:path'
+import { UserEntity } from '../entities/UserEntity';
+import { SessionEntity } from '../entities/SessionEntity';
 
 dotenv.config()
 
@@ -14,7 +16,7 @@ export const AppDataSource = new DataSource({
     database: process.env.DB_NAME || "safety_db",
     synchronize: false,
     logging: false,
-    entities: [SafetyEventEntity],
+    entities: [SafetyEventEntity, UserEntity, SessionEntity],
     migrations: [path.join(__dirname, '../migrations/*.{ts,js}')],
     migrationsTableName: "migrations",
 })

@@ -6,6 +6,9 @@ export class SafetyEventEntity {
     @PrimaryGeneratedColumn()
     id!: number;
 
+    @Column('integer', { nullable: true })
+    ownerId!: number | null;
+
     @Column('bigint', { transformer: { to: (value: number) => value, from: (value: string) => Number(value) } })
     createdAt!: number;
 
