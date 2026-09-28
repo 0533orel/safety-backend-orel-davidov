@@ -4,7 +4,9 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
-const request = require('supertest');
+const { client, fixtureSession } = require('./auth-support.cjs');
+let credentials;
+const request = app => client(app, credentials);
 const { newDb, DataType } = require('pg-mem');
 let app, db, uploads;
 const event = {
@@ -22,23 +24,27 @@ before(async () => {
   uploads = await fs.mkdtemp(path.join(os.tmpdir(), 'safety-test-'));
   process.env.UPLOAD_DIR = uploads;
   if (process.env.SAFETY_REAL_POSTGRES === 'true') {
+    await require('./postgres/events.test.cjs').migrationsReady;
     db = require('../dist/config/database').AppDataSource;
     await db.initialize();
     app = require('../dist/server').createApp();
+    credentials = await fixtureSession(db);
     return;
   }
   const memory = newDb();
   memory.public.registerFunction({ name: 'current_database', returns: DataType.text, implementation: () => 'test' });
   memory.public.registerFunction({ name: 'version', returns: DataType.text, implementation: () => 'PostgreSQL 16' });
   const { SafetyEventEntity } = require('../dist/entities/SafetyEventEntity');
-  db = memory.adapters.createTypeormDataSource({ type: 'postgres', entities: [SafetyEventEntity], synchronize: true });
+  db = memory.adapters.createTypeormDataSource({ type: 'postgres', entities: [SafetyEventEntity, require('../dist/entities/UserEntity').UserEntity, require('../dist/entities/SessionEntity').SessionEntity], synchronize: true });
   await db.initialize();
   const { AppDataSource } = require('../dist/config/database');
   AppDataSource.getRepository = db.getRepository.bind(db);
   AppDataSource.transaction = db.transaction.bind(db);
   app = require('../dist/server').createApp();
+  credentials = await fixtureSession(db);
 });
 after(async () => { if (db?.isInitialized) await db.destroy(); if (uploads) await fs.rm(uploads, { recursive: true, force: true }); });
+module.exports = { authenticatedRequest: () => request(app) };
 
 test('JSON CRUD ignores client IDs and timestamps; bigint returns as a number', async () => {
   const created = await request(app).post('/api/events').send({ ...event, id: 999, createdAt: 0, imagePath: '../bad' }).expect(201);
@@ -56,7 +62,8 @@ test('invalid identifiers, missing fields, impossible dates and malformed flags 
   for (const body of [{}, { ...event, eventDate: '0000-01-01' }, { ...event, eventDate: '2025-02-30' }, { ...event, eventTime: '25:00' }, { ...event, eventDate: '2999-01-01' }]) {
     await request(app).post('/api/events').send(body).expect(400);
   }
-  await request(app).put('/api/events/1').send({ ...event, deleteImage: 'yes' }).expect(400);
+  const created = await request(app).post('/api/events').send(event).expect(201);
+  await request(app).put('/api/events/' + created.body.id).send({ ...event, deleteImage: 'yes' }).expect(400);
 });
 test('JSON boolean and multipart string both remove stored images', async () => {
   for (const multipart of [false, true]) {
@@ -122,6 +129,7 @@ test('event clock and future rejection are independent of host timezone', async 
 });
 
 if (process.env.SAFETY_REAL_POSTGRES === 'true') {
+  require('./auth-scenarios.cjs')({ context: () => ({ app, db, uploads, credentials }), event, png });
   test('every contract option is accepted by HTTP and database constraints', async () => {
     const contract = require('../dist/contract/event-contract.json');
     for (const [field, values] of Object.entries(contract.enums)) {
