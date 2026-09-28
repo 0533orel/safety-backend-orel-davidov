@@ -1,3 +1,5 @@
+import contract from '../contract/event-contract.json';
+import { eventClock } from '../contract/eventClock';
 import { HttpError } from '../httpError';
 import { SafetyEventEntity } from '../entities/SafetyEventEntity';
 const required = ['unitName', 'description', 'eventDate', 'eventTime', 'location', 'result',
@@ -18,9 +20,17 @@ export function parseEventInput(input: unknown): Partial<SafetyEventEntity> {
     if (!/^\d{4}-\d{2}-\d{2}$/.test(result.eventDate) || !/^([01]\d|2[0-3]):[0-5]\d$/.test(result.eventTime))
         throw new HttpError(400, 'Invalid date or time');
     const date = new Date(result.eventDate + 'T00:00:00Z');
-    if (!Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== result.eventDate)
+    if (result.eventDate < '0001-01-01' || !Number.isFinite(date.getTime()) || date.toISOString().slice(0, 10) !== result.eventDate)
         throw new HttpError(400, 'Invalid date');
-    if (new Date(result.eventDate + 'T' + result.eventTime).getTime() > Date.now())
+    for (const [field, values] of Object.entries(contract.enums)) {
+        if (field === 'injurySeverity' && !result[field]) continue;
+        if (!values.includes(result[field])) throw new HttpError(400, 'Invalid option: ' + field);
+    }
+    if (result.result.includes('יש נפגעים') && !result.injurySeverity)
+        throw new HttpError(400, 'Missing injurySeverity');
+    if ((result.location === 'שטח אזרחי' || result.coordinates) && !/^\d{6}\/\d{6}$/.test(result.coordinates))
+        throw new HttpError(400, 'Invalid coordinates');
+    if (result.eventDate + 'T' + result.eventTime > eventClock())
         throw new HttpError(400, 'Future events are not allowed');
     return result;
 }
